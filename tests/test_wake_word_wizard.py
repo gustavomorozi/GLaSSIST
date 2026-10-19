@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import i18n  # noqa: E402
 import wake_word_wizard as W  # noqa: E402
+from flet.core.page import Window as FletWindow  # noqa: E402
 
 
 @pytest.fixture
@@ -20,6 +21,10 @@ def wizard(tmp_path):
     w = W.WakeWordWizard()
     w.root = str(tmp_path / 'trainer')
     page = Mock(spec=ft.Page)
+    # A strict window: calling or setting a name the real Flet 0.28 Window does not have fails the
+    # test. (The previous plain Mock accepted page.window_destroy(), which does not exist, and hid
+    # a Close button that did nothing.)
+    page.window = Mock(spec_set=FletWindow)
     w.main(page)
     yield w
     i18n.set_language('en')
@@ -335,15 +340,32 @@ def test_captured_triggers_are_used_as_negatives_and_never_twice(wizard, monkeyp
     assert wizard.imp_trig_btn.disabled and 'Ainda nenhum' in wizard.imp_trig_text.value    # all were consumed
 
 
+def test_window_uses_the_flet_0_28_api(wizard):
+    win = wizard.page.window
+    assert (win.width, win.height) == (860, 760)
+    assert win.prevent_close is True and callable(win.on_event)
+
+
+def test_closing_the_window_stops_work_and_destroys_it(wizard):
+    from types import SimpleNamespace
+    from unittest.mock import Mock as M
+    wizard.proc = M(); wizard.proc.poll.return_value = None            # a training process still running
+    wizard.page.window.on_event(SimpleNamespace(data='close'))
+    wizard.proc.terminate.assert_called_once()                         # never left orphaned
+    wizard.page.window.destroy.assert_called_once()
+    assert wizard.stop_event.is_set()
+    wizard.page.window.destroy.reset_mock()
+    wizard.page.window.on_event(SimpleNamespace(data='focus'))        # other window events are ignored
+    wizard.page.window.destroy.assert_not_called()
+
+
 def test_last_step_has_a_close_button(wizard, monkeypatch):
     wizard.lang_dd.value, wizard.word_tf.value = 'pt', 'Bruninha'
     wizard._apply_welcome()
     wizard._show(6)
     assert wizard.next_btn.visible and wizard.next_btn.text == 'Fechar'
-    closed = []
-    monkeypatch.setattr(wizard, '_on_close', lambda: closed.append(True))
-    wizard.next_btn.on_click(None)
-    assert closed == [True]
+    wizard.next_btn.on_click(None)                                      # the real close path, not a stub
+    wizard.page.window.destroy.assert_called_once()
     wizard._show(4)
     assert wizard.next_btn.text == 'Avançar'          # not the close button on other steps
 

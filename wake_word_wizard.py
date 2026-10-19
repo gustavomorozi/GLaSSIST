@@ -88,10 +88,11 @@ class WakeWordWizard:
         self.page = page
         page.title = t('Create your own wake word')
         page.theme_mode = ft.ThemeMode.SYSTEM
-        page.window_width, page.window_height = 860, 760
+        # Flet 0.28 window API: page.window.* (the old page.window_* names no longer exist)
+        page.window.width, page.window.height = 860, 760
         page.padding = 20
-        page.window_prevent_close = True          # so we can stop the background training first
-        page.on_window_event = lambda e: self._on_close() if e.data == 'close' else None
+        page.window.prevent_close = True          # so we can stop the background work before closing
+        page.window.on_event = lambda e: self._on_close() if getattr(e, 'data', None) == 'close' else None
         self.header = ft.Row(wrap=True, spacing=8)
         self.title = ft.Text(size=22, weight=ft.FontWeight.BOLD)
         self.body = ft.Container(expand=True)
@@ -158,11 +159,11 @@ class WakeWordWizard:
     def _on_close(self):
         self.stop_event.set()
         if self.proc and self.proc.poll() is None:
-            self.proc.terminate()
+            self.proc.terminate()                  # never leave a training process orphaned
         try:
-            self.page.window_destroy()
-        except Exception:
-            pass
+            self.page.window.destroy()
+        except Exception as exc:                  # do not swallow silently: it hid this bug before
+            logger.error(f'could not close the wizard window: {exc}')
 
     def _refresh_header(self):
         self.header.controls = [
