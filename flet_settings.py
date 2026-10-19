@@ -5,7 +5,6 @@ Replaces the problematic Tkinter-based settings
 import flet as ft
 import asyncio
 import os
-import sys
 import threading
 import webbrowser
 import subprocess
@@ -35,7 +34,7 @@ class FletSettingsApp:
         
     async def main(self, page: ft.Page):
         """Main Flet application entry point"""
-        page.title = "GLaSSIST Settings"
+        page.title = i18n.t("GLaSSIST Settings")
         page.theme_mode = ft.ThemeMode.SYSTEM
         page.window_width = 1400
         page.window_height = 1000
@@ -197,7 +196,7 @@ class FletSettingsApp:
                     icon=ft.Icons.MIC,
                     content=await self._create_audio_tab(current_settings)
                 ),
-                ft.Tab(text="Rooms", icon=ft.Icons.HOME,
+                ft.Tab(text="Rooms (beta)", icon=ft.Icons.HOME,
                        content=await self._create_rooms_tab()),
                 ft.Tab(
                     text="Wake Word",
@@ -215,7 +214,12 @@ class FletSettingsApp:
                     content=await self._create_advanced_tab(current_settings)
                 ),
                 ft.Tab(
-                    text="About",
+                    text="Changelog",
+                    icon=ft.Icons.HISTORY,
+                    content=self._create_changelog_tab()
+                ),
+                ft.Tab(
+                    text="About & Help",
                     icon=ft.Icons.INFO_OUTLINE,
                     content=await self._create_about_tab()
                 )
@@ -290,6 +294,7 @@ class FletSettingsApp:
 
         # Kick off the background update check now that the version bar exists
         self._start_update_check()
+        self._start_changelog_load()
         
         # Auto-refresh wake word models after all UI is created
         try:
@@ -824,9 +829,8 @@ class FletSettingsApp:
         # Keep a short clip of every detection, to teach the model what fools it (reduces false triggers)
         self.save_detections_switch = ft.Switch(
             label="Save a 3-second audio clip of every detection",
-            tooltip="Kept only on this computer, in the wakeword_workspace/detections folder. "
-                    "Used by the wizard to retrain the wake word with the sounds that fooled it. "
-                    "Restart GLaSSIST to apply.",
+            tooltip="Kept only on this computer, in the detections folder of the GLaSSIST "
+                    "configuration directory. Restart GLaSSIST to apply.",
             value=current_settings['HA_WAKE_WORD_SAVE_DETECTIONS'] == 'true',
             active_color=ft.Colors.ORANGE_700
         )
@@ -905,27 +909,15 @@ class FletSettingsApp:
                             self.noise_suppression_switch,
                             self.save_detections_switch,
                             ft.Text("When it is on, every detection keeps ~3 seconds of the audio that triggered it "
-                                    "(only on this computer). Delete the clips where you really said the word; "
-                                    "the wizard retrains with the rest to stop the false triggers.",
-                                    size=12, color=ft.Colors.GREY_600),
-                            ft.Container(height=15),
-                            ft.Text("Triggering by mistake (conversations, TV, music)?",
-                                    size=14, weight=ft.FontWeight.W_500),
-                            ft.Text("Raising the threshold helps a little. The real fix is to record everyday audio "
-                                    "and retrain your wake word with it: the wizard does it for you.",
-                                    size=12, color=ft.Colors.GREY_600),
-                            ft.OutlinedButton(
-                                "Reduce false triggers",
-                                icon=ft.Icons.HEARING_DISABLED,
-                                tooltip="Opens the wizard on the Improve step for one of your custom wake words",
-                                on_click=lambda e: self._open_wake_word_wizard(e, improve=True)
-                            )
+                                    "(only on this computer, off by default). Delete the clips where you really said "
+                                    "the word; the rest are the sounds that fool the model, useful to retrain it.",
+                                    size=12, color=ft.Colors.GREY_600)
                         ]),
                         padding=20
                     ),
                     elevation=2
                 ),
-
+                
                 # Management card
                 ft.Card(
                     content=ft.Container(
@@ -936,13 +928,6 @@ class FletSettingsApp:
                                     "Open Models Folder",
                                     icon=ft.Icons.FOLDER_OPEN,
                                     on_click=self._open_models_folder
-                                ),
-                                ft.FilledButton(
-                                    "Create your own wake word",
-                                    icon=ft.Icons.AUTO_FIX_HIGH,
-                                    tooltip="Step-by-step wizard: choose a language and a word, record your voice, "
-                                            "train and test the model",
-                                    on_click=self._open_wake_word_wizard
                                 )
                             ], spacing=10, wrap=True),
                             ft.Container(height=10),
@@ -1004,6 +989,12 @@ class FletSettingsApp:
                                 "GLaSSIST can automatically adjust media player volumes during voice interactions. "
                                 "Select media players below or enter entity IDs manually.",
                                 color=ft.Colors.GREY_700,
+                                size=13
+                            ),
+                            ft.Text(
+                                "ESPHome mode: requires the Home Assistant address and access token "
+                                "(Connection tab → WebSocket Settings).",
+                                color=ft.Colors.ORANGE_400,
                                 size=13
                             ),
                             ft.Container(height=10),
@@ -1086,12 +1077,12 @@ class FletSettingsApp:
             active_color=ft.Colors.BLUE_600
         )
         
-        # Interface language (applies after saving and reopening the settings window)
+        # Interface language (applies after restarting GLaSSIST)
         self.language_dropdown = ft.Dropdown(
             label="Language",
             value=current_settings['HA_LANGUAGE'],
             options=[ft.dropdown.Option(key=code, text=name) for code, name in i18n.LANGUAGES.items()],
-            helper_text="Interface language. Save and reopen the settings window to apply.",
+            helper_text="Interface language. Restart GLaSSIST to apply.",
             expand=True
         )
 
@@ -1224,7 +1215,7 @@ class FletSettingsApp:
         )
     
     async def _create_about_tab(self):
-        """Create about tab"""
+        """Create about & help tab"""
         return ft.Container(
             content=ft.Column([
                 ft.Container(height=20),
@@ -1248,7 +1239,34 @@ class FletSettingsApp:
                     ),
                     elevation=2
                 ),
-                
+
+                # Help card
+                ft.Card(
+                    content=ft.Container(
+                        content=ft.Column([
+                            ft.Text("🛟 Help & Feedback", size=18, weight=ft.FontWeight.BOLD,
+                                   text_align=ft.TextAlign.CENTER),
+                            ft.Text("Something not working or have an idea? Open an issue on GitHub or write to me.",
+                                   size=16, text_align=ft.TextAlign.CENTER, color=ft.Colors.GREY_700),
+                            ft.Container(height=15),
+                            ft.Row([
+                                ft.ElevatedButton(
+                                    "🐞 Report an issue",
+                                    icon=ft.Icons.BUG_REPORT,
+                                    on_click=lambda _: webbrowser.open("https://github.com/SmolinskiP/GLaSSIST/issues")
+                                ),
+                                ft.ElevatedButton(
+                                    "smolinski.patryk@mensa.org.pl",
+                                    icon=ft.Icons.EMAIL,
+                                    on_click=lambda _: webbrowser.open("mailto:smolinski.patryk@mensa.org.pl?subject=GLaSSIST")
+                                ),
+                            ], alignment=ft.MainAxisAlignment.CENTER, wrap=True),
+                        ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                        padding=30
+                    ),
+                    elevation=2
+                ),
+
                 # Support card
                 ft.Card(
                     content=ft.Container(
@@ -1271,10 +1289,48 @@ class FletSettingsApp:
                 ),
             ], 
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            spacing=20),
+            spacing=20,
+            scroll=ft.ScrollMode.AUTO),
             padding=20
         )
     
+    def _create_changelog_tab(self):
+        """Create changelog tab; release notes are loaded from GitHub in the background"""
+        self.changelog_column = ft.Column(
+            [ft.Text("Loading changes from GitHub…", color=ft.Colors.GREY_500)],
+            spacing=10, scroll=ft.ScrollMode.AUTO, expand=True)
+        return ft.Container(content=self.changelog_column, padding=20)
+
+    def _start_changelog_load(self):
+        """Fetch release notes from GitHub without blocking the settings window."""
+        def worker():
+            releases = update_checker.get_releases()
+            controls = []
+            if releases:
+                for release in releases:
+                    current = release['tag'].lstrip('v') == __version__
+                    controls += [
+                        ft.Text(release['name'], size=18, weight=ft.FontWeight.BOLD),
+                        ft.Text(f"{release['date']}{i18n.t(' · installed version') if current else ''}",
+                                size=12, color=ft.Colors.CYAN_400 if current else ft.Colors.GREY_500),
+                        ft.Markdown(release['notes'], selectable=True,
+                                    extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
+                                    on_tap_link=lambda e: webbrowser.open(e.data)),
+                        ft.Divider(),
+                    ]
+            else:
+                controls.append(ft.Text("Could not load the changelog from GitHub.", color=ft.Colors.GREY_500))
+            controls.append(ft.TextButton(
+                "View all releases on GitHub", icon=ft.Icons.OPEN_IN_NEW,
+                on_click=lambda _: webbrowser.open(update_checker.RELEASES_URL)))
+            self.changelog_column.controls = controls
+            try:
+                self.page.update()
+            except Exception:
+                pass  # Page may be closed; ignore
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def _start_update_check(self):
         """Run the GitHub update check in the background and update the top version bar."""
         def worker():
@@ -1287,7 +1343,7 @@ class FletSettingsApp:
             if latest:
                 self.update_status_text.value = "Update available"
                 self.update_status_text.color = ft.Colors.CYAN_400
-                self.update_link_button.text = f"⬇️ Update to {latest}"
+                self.update_link_button.text = i18n.t(f"⬇️ Update to {latest}")
                 self.update_link_button.visible = True
             else:
                 self.update_status_text.value = "✓ Latest version"
@@ -1948,24 +2004,6 @@ class FletSettingsApp:
             await self._show_dialog("Error", f"Failed to download models: {str(ex)}")
             logger.error(f"Model download failed: {ex}")
     
-    def _open_wake_word_wizard(self, e, improve=False):
-        """Launch the custom wake word wizard in its own process (it has its own Flet window).
-
-        improve=True opens it on the "Improve" step (record everyday audio and retrain) for an
-        existing custom wake word, to reduce false triggers.
-        """
-        try:
-            flag = ['--wake-word-wizard'] + (['--improve'] if improve else [])
-            if getattr(sys, 'frozen', False):
-                cmd = [sys.executable] + flag
-            else:
-                cmd = [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'main.py')] + flag
-            subprocess.Popen(cmd, cwd=os.path.dirname(os.path.abspath(__file__)))
-            logger.info("Started the wake word wizard")
-        except Exception as ex:
-            logger.error(f"Failed to start the wake word wizard: {ex}")
-            asyncio.create_task(self._show_dialog("Error", f"Failed to start the wizard: {str(ex)}"))
-
     def _open_models_folder(self, e):
         """Open models folder"""
         try:
@@ -2163,10 +2201,7 @@ class FletSettingsApp:
                 'DEBUG': 'true' if self.debug_switch.value else 'false',
                 'HA_ANIMATIONS_ENABLED': 'true' if self.animations_switch.value else 'false',
                 'HA_RESPONSE_TEXT_ENABLED': 'true' if self.response_text_switch.value else 'false',
-                'HA_LANGUAGE': i18n.normalize(
-                    getattr(getattr(self, 'language_dropdown', None), 'value', None)
-                    or utils.get_env('HA_LANGUAGE', 'en')
-                ),
+                'HA_LANGUAGE': i18n.normalize(self.language_dropdown.value),
                 'HA_SAMPLE_RATE': self.sample_rate_dropdown.value,
                 'HA_OUTPUT_SAMPLE_RATE': self.output_sample_rate_dropdown.value,
                 'HA_FRAME_DURATION_MS': self.frame_duration_dropdown.value,

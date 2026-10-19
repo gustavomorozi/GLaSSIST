@@ -8,7 +8,7 @@ import numpy as np
 import pyaudio
 import utils
 import platform
-import platform_utils
+import detection_clips
 from platform_utils import check_wake_word_noise_suppression
 
 logger = utils.setup_logger()
@@ -54,21 +54,12 @@ class WakeWordDetector:
         else:
             self.noise_suppression = bool(noise_suppression_str)
         
-        # Optional: keep ~3 s of audio around every detection so false triggers can be learned from
-        # (kept in memory, written only when it triggers). Settings > Wake Word > Detection.
-        self._capture = None
-        save_str = utils.get_env("HA_WAKE_WORD_SAVE_DETECTIONS", "false")
-        if str(save_str).lower() in ('true', '1', 'yes', 'y', 't'):
-            try:
-                from wakeword_trainer import capture
-                self._capture = capture.TriggerRecorder(
-                    capture.default_folder(platform_utils.get_config_dir()))
-            except Exception as e:
-                logger.warning(f"Could not enable detection capture: {e}")
+        # Optional (off by default): keep ~3 s of audio around every detection to learn from false triggers
+        self.clips = detection_clips.from_env()
 
         # Model configuration
         self.selected_models = self._get_selected_models()
-
+        
         self._ensure_models_directory()
         
         if self.enabled:
@@ -381,9 +372,8 @@ class WakeWordDetector:
                     
                     # Convert to numpy array
                     audio_array = np.frombuffer(audio_data, dtype=np.int16)
-                    if self._capture is not None:
-                        self._capture.push(audio_array)
-
+                    self.record_audio(audio_array)
+                    
                     # Get predictions from openWakeWord
                     predictions = self.model.predict(audio_array)
                     
@@ -405,6 +395,16 @@ class WakeWordDetector:
         finally:
             logger.info("Wake word detection loop ended")
     
+    def record_audio(self, audio_array):
+        """Feed the detection-clip ring buffer (no-op unless HA_WAKE_WORD_SAVE_DETECTIONS is on)."""
+        if self.clips is not None:
+            self.clips.push(audio_array)
+
+    def record_detection(self, model_name, score):
+        """Queue the last seconds of audio for saving; the file is written on another thread."""
+        if self.clips is not None:
+            self.clips.save(model_name, score)
+
     def _process_predictions(self, predictions):
         """Process wake word predictions and trigger callback if detected."""
         for model_name, score in predictions.items():
@@ -412,12 +412,8 @@ class WakeWordDetector:
                 # Only trigger on models that were specifically selected by user
                 if model_name in self.selected_models:
                     logger.info(f"Wake word detected: '{model_name}' (confidence: {score:.3f})")
-                    if self._capture is not None:
-                        try:
-                            self._capture.save(model_name, float(score))
-                        except Exception as e:
-                            logger.debug(f"Could not save detection clip: {e}")
-
+                    self.record_detection(model_name, score)
+                    
                     # Call detection callback
                     if self.detection_callback:
                         try:
@@ -474,7 +470,7 @@ class WakeWordDetector:
         self.vad_threshold = utils.get_env("HA_WAKE_WORD_VAD_THRESHOLD", 0.3, float)
         
         # Safe boolean parsing for noise suppression
-        noise_suppression_str = utils.get_env("HA_WAKE_WORD_NOISE_SUPPRESSION", "true")
+        noise_suppression_str = utils.get_env("HA_WAKE_WORD_NOISE_SUPPRESSION", "false")
         if isinstance(noise_suppression_str, str):
             self.noise_suppression = noise_suppression_str.lower() in ('true', '1', 'yes', 'y', 't')
         else:

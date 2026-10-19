@@ -48,17 +48,19 @@ def test_save_button_writes_rooms_or_reports_disk_error(tmp_path, disk_failure):
         'sample_rate_dropdown': '16000', 'output_sample_rate_dropdown': '-1',
         'frame_duration_dropdown': '30', 'media_player_entities_field': '',
         'timer_sound_field': '', 'device_name_field': 'GLaSSIST', 'esphome_port_field': '6053',
+        'language_dropdown': 'pl',
     }
     for name, value in text_fields.items():
         setattr(app, name, SimpleNamespace(value=value))
     for name in ('wake_word_enabled', 'sound_feedback_switch', 'processing_sound_switch',
                  'debug_switch', 'animations_switch', 'response_text_switch',
-                 'noise_suppression_switch', 'continue_on_question_switch'):
+                 'noise_suppression_switch', 'continue_on_question_switch', 'save_detections_switch'):
         setattr(app, name, ft.Switch(value=False))
     for name, value in {'silence_slider': 0.8, 'vad_slider': 3, 'wake_threshold_slider': 0.5,
                         'vad_threshold_slider': 0.3, 'target_volume_slider': 0.3,
                         'conversation_timeout_slider': 300}.items():
         setattr(app, name, SimpleNamespace(value=value))
+    app.save_detections_switch.value = True
     app.selected_models_column = ft.Column()
     asyncio.run(app._populate_wake_word_models('hey_jarvis'))
     env = tmp_path / '.env'
@@ -78,6 +80,8 @@ def test_save_button_writes_rooms_or_reports_disk_error(tmp_path, disk_failure):
     assert values['HA_ROOMS_ENABLED'] == 'true'
     assert values['HA_WAKE_WORD_ENABLED'] == 'true'
     assert json.loads(values['HA_ROOMS']) == [room]
+    assert values['HA_LANGUAGE'] == 'pl'
+    assert values['HA_WAKE_WORD_SAVE_DETECTIONS'] == 'true'
     dialog = app.page.open.call_args.args[0]
     assert dialog.title.value == 'Settings Saved'
 
